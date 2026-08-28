@@ -26,6 +26,11 @@ _MISSING = object()
 @never_cache
 @require_POST
 def confirm_human(request):
+    """Mark the session as belonging to a human, without clobbering the session.
+
+    See _save_only_confirm_human_changes for why the session handling is not
+    left to the middleware.
+    """
     if not conf.CONFIRM_HUMAN:
         return HttpResponse(status=204)
 
@@ -63,15 +68,20 @@ def _save_only_confirm_human_changes(session, before):
         return
 
     changed = {key: value for key, value in session.items() if before.get(key, _MISSING) != value}
-    if not changed:
-        session.modified = False
-        return
 
     fresh = type(session)(session_key=session.session_key)
-    for key, value in changed.items():
-        fresh[key] = value
-    fresh.save()
-    # The middleware must not write our stale snapshot over the merge above.
+    if changed:
+        for key, value in changed.items():
+            fresh[key] = value
+        fresh.save()
+
+    # The middleware must not write this request's stale snapshot over the
+    # merge above. With SESSION_SAVE_EVERY_REQUEST=True it saves even an
+    # unmodified session, so the request's session object is also pointed at
+    # the merged state - whatever the middleware does, it persists that.
+    # (_session_cache is the only way to replace the contents without
+    # marking the session dirty.)
+    session._session_cache = dict(fresh.items())
     session.modified = False
 
 
