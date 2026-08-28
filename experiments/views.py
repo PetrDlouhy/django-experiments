@@ -1,3 +1,4 @@
+from django.contrib.sessions.backends.signed_cookies import SessionStore as SignedCookiesStore
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.views.decorators.cache import never_cache
 from django.shortcuts import get_object_or_404
@@ -19,13 +20,59 @@ TRANSPARENT_1X1_PNG = \
  "\x00\x49\x45\x4e\x44\xae\x42\x60\x82\x00")
 
 
+_MISSING = object()
+
+
 @never_cache
 @require_POST
 def confirm_human(request):
-    if conf.CONFIRM_HUMAN:
-        experiment_user = participant(request)
-        experiment_user.confirm_human()
+    if not conf.CONFIRM_HUMAN:
+        return HttpResponse(status=204)
+
+    session = getattr(request, 'session', None)
+    before = dict(session.items()) if session is not None else {}
+
+    experiment_user = participant(request)
+    experiment_user.confirm_human()
+
+    _save_only_confirm_human_changes(session, before)
     return HttpResponse(status=204)
+
+
+def _save_only_confirm_human_changes(session, before):
+    """Persist this request's session changes without dropping concurrent ones.
+
+    confirm_human() replays the participant's enrollments and goals - a counter
+    round trip each - between writing its session flag and the session being
+    saved at the end of the request. That can take seconds, and the middleware
+    then writes back the whole session dict as it looked when this request
+    loaded it: a concurrent request that wrote to the same session in the
+    meantime (an OAuth login storing its state, for example) is silently
+    overwritten by this request's stale snapshot.
+
+    Instead, re-read the stored session, write only the keys confirm_human
+    changed, and keep the middleware from saving the stale snapshot.
+    """
+    if session is None or not session.session_key:
+        # No stored session yet, so there is nothing to race with - let the
+        # middleware create and save the session as it normally would.
+        return
+    if isinstance(session, SignedCookiesStore):
+        # Cookie-backed sessions have no server-side store to race on;
+        # persistence is the response cookie the middleware writes.
+        return
+
+    changed = {key: value for key, value in session.items() if before.get(key, _MISSING) != value}
+    if not changed:
+        session.modified = False
+        return
+
+    fresh = type(session)(session_key=session.session_key)
+    for key, value in changed.items():
+        fresh[key] = value
+    fresh.save()
+    # The middleware must not write our stale snapshot over the merge above.
+    session.modified = False
 
 
 @never_cache
