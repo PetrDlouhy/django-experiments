@@ -54,7 +54,7 @@ def clear_participant_cache(request):
 def _get_participant(request, session, user):
     if request and hasattr(request, 'user') and not user:
         user = request.user
-    if request and hasattr(request, 'session') and not session:
+    if request and hasattr(request, 'session') and session is None:
         session = request.session
 
     if request and conf.BOT_REGEX.search(request.META.get("HTTP_USER_AGENT", "")):
@@ -64,7 +64,10 @@ def _get_participant(request, session, user):
             return WebUser(user=user, request=request)
         else:
             return DummyUser()
-    elif session:
+    elif session is not None:
+        # Truthiness is not identity here: since Django 6.1 an *empty* session
+        # is falsy, and a fresh visitor's empty session must still get a
+        # WebUser, not a DummyUser.
         return WebUser(session=session, request=request)
     else:
         return DummyUser()
@@ -409,7 +412,10 @@ class WebUser(BaseUser):
     
     @property
     def _session_key(self):
-        if not self.session:
+        # `is None`, not truthiness: since Django 6.1 an *empty* session is
+        # falsy, and returning None for every fresh visitor would key all of
+        # their enrollments and counters to the same identifier.
+        if self.session is None:
             return None
         if 'experiments_session_key' not in self.session:
             if not self.session.session_key:
