@@ -12,7 +12,9 @@ jobs:
     strategy:
       max-parallel: 5
       matrix:
-        python-version: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10']
+        # 3.7 is gone from the ubuntu-latest runner images (setup-python:
+        #   "Version 3.7 with arch x64 not found").
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12', '3.13', 'pypy-3.8', 'pypy-3.9', 'pypy-3.10']
       fail-fast: false
 
     steps:
